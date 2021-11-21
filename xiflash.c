@@ -88,6 +88,7 @@ void usage()
 	printf("   -o   - Specifies output file for -r option.\n");
 	printf("   -a   - Segment address of flash ROM area to work on in hexadecimal format.\n");
 	printf("          Must be in E000-F000 range. The default is F800 (BIOS address).\n");
+	printf("          When programming 64 KiB images, the default is F000.\n");
 	printf("   -s   - Specifies ROM size for -r and -c options.\n");
 	printf("	  The default is %u.\n\n", CHUNK_SIZE);
 	exit(1);
@@ -335,7 +336,7 @@ int rom_identify(unsigned char __far *rom_start)
 			if (eeproms[index].vendor_id == vendor_id && eeproms[index].device_id == device_id)
 				break;
 		if (NUM_DEVICES == index) {
-			printf("ERROR: Unsupported Flash ROM type. Vendor ID = 0x%02X; Device ID = 0x%02X\n",
+			printf("ERROR: Unsupported flash ROM type. Vendor ID = 0x%02X; Device ID = 0x%02X\n",
 			       vendor_id, device_id);
 			index = -1;
 		}
@@ -429,13 +430,13 @@ void rom_program(__segment rom_addr, unsigned char __far *buf, unsigned long rom
 		/* try 0xE000 */
 		rom_start = 0xE000;
 		if ((eeprom_index = rom_identify(rom_start:>0)) == -1) {
-			error("Cannot detect Flash ROM type.\nOn Sergey's XT Version 1.0 systems make sure that SW2.6 - SW2.7 are OFF.");
+			error("Cannot detect flash ROM type.\nOn Sergey's XT Version 1.0 systems make sure that SW2.6 - SW2.7 are OFF.");
 		}
 	}
 
-	printf("Detected Flash ROM type: %s %s, page size: %u bytes.\nROM starts at 0x%04X.\n",
-		eeproms[eeprom_index].vendor_name, eeproms[eeprom_index].device_name,
-		eeproms[eeprom_index].page_size, rom_start);
+	printf("Detected flash ROM at 0x%04X, type: %s %s, page size: %u bytes.\n",
+		rom_start, eeproms[eeprom_index].vendor_name, eeproms[eeprom_index].device_name,
+		eeproms[eeprom_index].page_size);
 
 	/* check that requested ROM segment is on the page boundary */
 	page_paragraph = eeproms[eeprom_index].page_size / 16;
@@ -571,6 +572,9 @@ int main(int argc, char *argv[])
 	if ((mode & MODE_PROG) || (mode & MODE_VERIFY) ||
 	    ((mode & MODE_CHECKSUM) && in_file != NULL)) {
 		buf = load_file(in_file, &rom_size);
+		if (rom_size == 65536 && rom_seg == 0xF800) {
+			rom_seg = 0xF000;	/* set default ROM segment to F0000 for 64 KiB images */
+		}
 		/* check if ROM size extends beyond 1 MiB */
 		if ((rom_size + 15) / 16 - 1 + rom_seg < rom_seg) {
 			error("ROM image extends beyond 1 MiB. Make sure that the correct image file is specified. Also check -a option's argument (if specified).");
