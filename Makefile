@@ -1,39 +1,30 @@
-# add GPL copyright clause here
-
+# Makefile for xiflash
 #
-# Environment setup:
-# export WATCOM=/home/sergey/watcom
-# export INCLUDE=$WATCOM/h
-# PATH=$PATH:$WATCOM/binl
+# Copyright (C) 2012 Sergey Kiselev.
+# Provided for hobbyist use on the Xi 8088 board.
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-CC = wcl -c
-# Open Watcom C Compiler options:
-# -mc   compact memory form -f
-# -zdp  DS == DGROUP
-# -zu   SS != DGROUP
-# -s    remove stack overflow checks
-# -zp1  set struct packing alignment to 1
-# -oi   inline intrinsic functions
-# -os   optimize for space
-# -1    generate code for 186 or higher
-# -fpi87 use 8087 instructions
-#COPT = -mc -zdp -zu -s -zp1 -oi -os -1 -fpi87
-COPT = -mc
-LINK = wcl
-# Open Watcom liner options:
-# -lr   create a DOS real-mode program
-#LOPT = -mc -lr
-LOPT = -lr
+CC = open-watcom.owcc
+CFLAGS = -I/snap/open-watcom/current/h -bdos -mcmodel=c -Os -s -march=i86 -W -Wall -Wextra
 RM = rm
 
 all:	xiflash.exe
 
-xiflash.exe:	xiflash.obj
-	$(LINK) $(LOPT) -fe=$@ -fm=$*.map $<
-
-xiflash.obj:	xiflash.c
-	$(CC) $(COPT) -fo=$@ xiflash.c
+xiflash.exe:	xiflash.c
+	$(CC) $(CFLAGS) -o $@ xiflash.c
 
 clean:
-	$(RM) *.obj
 	$(RM) *.exe
+	$(RM) *.o
