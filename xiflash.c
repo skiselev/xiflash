@@ -28,6 +28,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <time.h>
 
 #define VERSION		"0.1"
 #define CHUNK_SIZE	32768
@@ -37,6 +38,10 @@
 #define MODE_VERIFY	(1 << 2)
 #define MODE_CHECKSUM	(1 << 3)
 #define NUM_DEVICES 5
+
+/* number of calibration loops to run */
+#define CALIBRATION_LOOPS 50000
+#define WRITE_TIMEOUT 10000
 
 struct{
 	unsigned char vendor_id;
@@ -57,6 +62,8 @@ struct{
 char *exec_name;
 
 unsigned int cmd_addr1 = 0x5555, cmd_addr2 = 0x2AAA;
+unsigned int debug = 0;
+unsigned int loops_per_1ms = 1;		/* calibrated later by calibrate_delay() */
 
 /* FIXME: should disable NMI too */
 void interrupts_disable();
@@ -82,6 +89,7 @@ void usage()
 	printf("          Must be in E000-F000 range. The default is F800 (BIOS address).\n");
 	printf("   -s   - Specifies ROM size for -r and -c options.\n");
 	printf("	  The default is %u.\n\n", CHUNK_SIZE);
+	printf("   -d   - Turns on debug output\n");
 
 	exit(1);
 }
@@ -93,9 +101,16 @@ void error(char *message) {
 
 void delay(unsigned int delay)
 {
-	while (delay--) {
-		while (inp(0x61) & 0x10);	/* port 0x61 - refresh cycle bit - one */
-		while (!(inp(0x61) & 0x10));	/* zero */
+	unsigned long loops = loops_per_1ms;
+	while (loops--) {
+		__asm {
+			push	cx
+			mov	cx,delay
+			delay_loop:
+			nop
+			loop	delay_loop
+			pop	cx
+		}
 	}
 }
 
@@ -206,7 +221,7 @@ int rom_identify(unsigned char __far *rom_start)
 	rom_st[cmd_addr1] = 0xAA;
 	rom_st[cmd_addr2] = 0x55;
 	rom_st[cmd_addr1] = 0x90;
-	delay(10);
+	delay(1);
 
 	vendor_id = rom_st[0];
 	device_id = rom_st[1];
@@ -219,7 +234,7 @@ int rom_identify(unsigned char __far *rom_start)
 		rom_st[cmd_addr1] = 0xAA;
 		rom_st[cmd_addr2] = 0x55;
 		rom_st[cmd_addr1] = 0x60;
-		delay(10);
+		delay(1);
 
 		vendor_id = rom_st[0];
 		device_id = rom_st[1];
@@ -236,7 +251,7 @@ int rom_identify(unsigned char __far *rom_start)
 		rom_st[cmd_addr1] = 0xAA;
 		rom_st[cmd_addr2] = 0x55;
 		rom_st[cmd_addr1] = 0x60;
-		delay(10);
+		delay(1);
 
 		vendor_id = rom_st[0];
 		device_id = rom_st[1];
@@ -246,7 +261,7 @@ int rom_identify(unsigned char __far *rom_start)
 	rom_st[cmd_addr1] = 0xAA;
 	rom_st[cmd_addr2] = 0x55;
 	rom_st[cmd_addr1] = 0xF0;
-	delay(10);
+	delay(1);
 
 	interrupts_enable();
 
@@ -307,10 +322,9 @@ int rom_program_block(unsigned char __far *rom_start, unsigned char __far *rom_a
 			rom_ad[offset] = buf[offset];
 
 		/* poll EPROM - wait for write operation to complete */
-		for (timeout = 0; timeout < 1000; timeout++) {
+		for (timeout = 0; timeout < WRITE_TIMEOUT; timeout++) {
 			if (rom_ad[block_size - 1] == buf[block_size - 1])
 				return 0;
-			delay(1);
 		}
 	} else {
 		for (offset = 0; offset < block_size; offset++) {
@@ -323,12 +337,11 @@ int rom_program_block(unsigned char __far *rom_start, unsigned char __far *rom_a
 			rom_ad[offset] = buf[offset];
 
 			/* verify byte */
-			for (timeout = 0; timeout < 100; timeout++) {
+			for (timeout = 0; timeout < WRITE_TIMEOUT; timeout++) {
 				if (rom_ad[offset] == buf[offset])
 					break;
-				delay(1);
 			}
-			if (timeout == 100)
+			if (timeout == WRITE_TIMEOUT)
 				break;
 		}
 		if (offset == block_size)
@@ -338,9 +351,9 @@ int rom_program_block(unsigned char __far *rom_start, unsigned char __far *rom_a
 	return 1;
 }
 
-void rom_program(__segment rom_addr, unsigned char *buf, size_t rom_size)
+void rom_program(__segment rom_addr, unsigned char __far *buf, size_t rom_size)
 {
-	int eeprom_index;
+	unsigned int eeprom_index;
 	__segment rom_start;
 	unsigned int page, num_pages, page_paragraph;
 
@@ -387,6 +400,18 @@ void rom_program(__segment rom_addr, unsigned char *buf, size_t rom_size)
 
 	interrupts_enable();
 	printf("Flash ROM has been programmed successfully.\nPlease reboot the system.\n");
+}
+
+void calibrate_delay() {
+	clock_t start_time, end_time;
+
+	start_time = clock();
+	delay(CALIBRATION_LOOPS);
+	end_time = clock();
+	loops_per_1ms = (long) 1000*CALIBRATION_LOOPS/CLOCKS_PER_SEC/(end_time - start_time);
+	if (debug) {
+		printf("DEBUG: Delay loops per 1ms: %u\n", loops_per_1ms);
+	}
 }
 
 int main(int argc, char *argv[])
@@ -453,6 +478,10 @@ int main(int argc, char *argv[])
 			mode |= MODE_CHECKSUM;
 			continue;
 		}
+		if (!strcmp(argv[i], "-d")) {
+			debug = 1;
+			continue;
+		}
 		error("Invalid command line argument.");
 	}
 	if (!mode)
@@ -488,11 +517,14 @@ int main(int argc, char *argv[])
 			       checksum(buf, rom_size));
 	}
 
-	if (mode & MODE_PROG)
+	if (mode & MODE_PROG) {
+		calibrate_delay();
 		rom_program(rom_seg, buf, rom_size);
+	}
 
-	if (mode & MODE_VERIFY)
+	if (mode & MODE_VERIFY) {
 		rom_verify(rom_seg:>0, buf, rom_size);
+	}
 
 	return 0;
 }
