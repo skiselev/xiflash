@@ -268,7 +268,7 @@ int rom_identify(unsigned char __far *rom_start)
 
 int rom_erase_block(unsigned char __far *rom_start, unsigned char __far *rom_addr)
 {
-	unsigned int offset, timeout;
+	unsigned int timeout;
 	volatile unsigned char __far *rom_st = rom_start;
 	volatile unsigned char __far *rom_ad = rom_addr;
 
