@@ -30,6 +30,7 @@
 #include <fcntl.h>
 #include <time.h>
 #include <malloc.h>
+#include <dos.h>
 
 #define VERSION		"0.1"
 #define CHUNK_SIZE	32768
@@ -115,6 +116,46 @@ void delay(unsigned int delay)
 	}
 }
 
+unsigned char __far *get_video_address()
+{
+	unsigned char video_mode;
+	unsigned char num_columns;
+	unsigned char video_page;
+	unsigned char column;
+	unsigned char row;
+	unsigned char __far *video_address = 0;
+	union REGS r;
+	r.h.ah = 0x0F;
+	int86(0x10, &r, &r);	/* INT 0x10 function 0x0F - Get current video mode */
+	video_mode = r.h.al;
+	num_columns = r.h.ah;
+	video_page = r.h.bh;
+	r.h.ah = 0x03;
+	int86(0x10, &r, &r);	/* INT 0x10 function 0x03 - Get cursor position and size */
+	column = r.h.dl;
+	row = r.h.dh;
+	if (video_mode <= 3) { /* CGA-compatible text modes */
+		video_address = 0xB800:>0;	/* Video buffer start address for the color text modes */
+		if (num_columns == 40) {
+			video_address += 2048 * video_page; /* add page offset for 40 column modes */
+		} else {
+			video_address += 4096 * video_page; /* add page offset for 80 column modes */
+		}
+		video_address += (unsigned int) (num_columns * row + column) * 2;
+	} else if (video_mode == 7) { /* MDA-compatible text mode */
+		video_address = 0xB000:>0;	/* Video buffer start for the monochrome text mode */
+		video_address += (unsigned int) (num_columns * row + column) * 2;
+	}
+	return video_address;
+}
+
+void video_write_char(unsigned char __far *video_address, unsigned char ch, unsigned char attr)
+{
+	if (video_address != 0) {
+		video_address[0] = ch;
+		video_address[1] = attr;
+	}
+}
 
 void rom_verify(unsigned char __far *rom_addr, unsigned char __far *buf, unsigned long rom_size) {
 	unsigned long i, diff = 0;
@@ -381,8 +422,9 @@ void rom_program(__segment rom_addr, unsigned char __far *buf, unsigned long rom
 {
 	unsigned int eeprom_index;
 	__segment rom_start;
-	unsigned int page, page_paragraph;
+	unsigned int page, page_paragraph, pages_per_column = 1;
 	unsigned long num_pages;
+	unsigned char __far *video_address;
 
 	/* try 0xF000 first */
 	rom_start = 0xF000;
@@ -415,14 +457,24 @@ void rom_program(__segment rom_addr, unsigned char __far *buf, unsigned long rom
 
 	printf("Programming the flash ROM with %lu bytes starting at address 0x%04X.\n", rom_size, rom_addr);
 	printf("Please wait... Do not reboot the system...\n");
+	video_address = get_video_address();
+	if (num_pages > 40) {
+		pages_per_column = num_pages / 32;
+	}
+	for (page = 0; page < num_pages; page++) {
+		video_write_char(video_address + (page / pages_per_column) * 2, 0xB0, 0x07);
+	}
 	interrupts_disable();
 
-	for (page = 0; page < rom_size / eeproms[eeprom_index].page_size; page++) {
+	for (page = 0; page < num_pages; page++) {
 		outp(0x80, page);
 		if (eeproms[eeprom_index].need_erase) {
+			video_write_char(video_address + (page / pages_per_column) * 2, 0xB1, 0x07);
 			rom_erase_block(rom_start:>0, rom_addr:>(eeproms[eeprom_index].page_size * page));
 		}
+		video_write_char(video_address + (page / pages_per_column) * 2, 0xB2, 0x07);
 		rom_program_block(rom_start:>0, rom_addr:>(eeproms[eeprom_index].page_size * page), buf + (eeproms[eeprom_index].page_size * page), eeproms[eeprom_index].page_size, eeproms[eeprom_index].page_write);
+		video_write_char(video_address + (page / pages_per_column) * 2, 0xDB, 0x07);
 	}
 
 	interrupts_enable();
