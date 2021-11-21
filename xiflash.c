@@ -1,9 +1,9 @@
 /*************************************************************************
- * xiflash.c - BIOS flash ROM utility for Xi 8088 board
+ * xiflash.c - BIOS flash ROM utility for Xi 8088 and Micro 8088 computers
  *
  *
- * Copyright (C) 2012 Sergey Kiselev.
- * Provided for hobbyist use on the Xi 8088 board.
+ * Copyright (C) 2012, 2021 Sergey Kiselev.
+ * 64 KiB image support ideas borrowed from uflash by Aitor Gomez (spark2k06)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -32,7 +32,7 @@
 #include <malloc.h>
 #include <dos.h>
 
-#define VERSION		"0.1"
+#define VERSION		"0.2"
 #define CHUNK_SIZE	32768
 
 #define MODE_READ	1
@@ -75,8 +75,6 @@ void interrupts_enable();
 
 void usage()
 {
-	printf("xiflash, Version %s. Copyright (C) 2012 Sergey Kiselev\n", VERSION);
-	printf("Distributed under the terms of the GNU General Public License\n\n");
 	printf("Usage: %s [-r|-p|-v|-c] [-i <input_file>] [-o <output_file>] [-a <address>] [-s <size>]\n\n", exec_name);
 	printf("Options:\n");
 	printf("   -r   - Read mode. Save current flash ROM content into <output_file>.\n");
@@ -498,6 +496,9 @@ int main(int argc, char *argv[])
 	unsigned long rom_size = CHUNK_SIZE;
 
 	exec_name = argv[0];
+
+	printf("xiflash, Version %s. Copyright (C) 2012, 2021 Sergey Kiselev\n", VERSION);
+	printf("Distributed under the terms of the GNU General Public License\n\n");
 
 	if (1 == argc) usage ();
 
