@@ -29,6 +29,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <time.h>
+#include <malloc.h>
 
 #define VERSION		"0.1"
 #define CHUNK_SIZE	32768
@@ -115,12 +116,12 @@ void delay(unsigned int delay)
 }
 
 
-void rom_verify(unsigned char __far *rom_addr, unsigned char *buf, size_t rom_size) {
-	unsigned int i, diff = 0;
+void rom_verify(unsigned char __far *rom_addr, unsigned char __far *buf, unsigned long rom_size) {
+	unsigned long i, diff = 0;
 
 	for (i = 0; i < rom_size; i++) {
 		if (rom_addr[i] != buf[i]) {
-			printf("WARNING: Difference found at 0x%04X: ROM = 0x%02X; file 0x%02X\n", i, rom_addr[i], buf[i]);
+			printf("WARNING: Difference found at 0x%05X: ROM = 0x%02X; file 0x%02X\n", i, rom_addr[i], buf[i]);
 			diff++;
 		}	
 	}
@@ -133,11 +134,12 @@ void rom_verify(unsigned char __far *rom_addr, unsigned char *buf, size_t rom_si
 }
 
 /* rom_read - DUMP ROM content to a file */
-void rom_read(unsigned char __far *rom_addr, char *out_file, size_t rom_size) {
+void rom_read(unsigned char __far *rom_addr, char *out_file, unsigned long rom_size) {
 	FILE *fp_out;
-	size_t count;
+	size_t count, write_size;
+	unsigned long bytes_to_write = rom_size;
 
-	printf("Saving ROM content to %s, size %u bytes.\n",
+	printf("Saving ROM content to %s, size %lu bytes.\n",
 		out_file, rom_size);
 
 	if ((fp_out = fopen(out_file, "wb")) == NULL) {
@@ -146,18 +148,28 @@ void rom_read(unsigned char __far *rom_addr, char *out_file, size_t rom_size) {
 		exit(2);
 	}
 	
-	if ((count = fwrite(rom_addr, 1, rom_size, fp_out)) != rom_size) {
-		printf("ERROR: Short write while writing %s. Wrote %u bytes, expected to write %u bytes.\n",
-	               out_file, count, rom_size);
-		exit(3);
+	while (bytes_to_write > 0) {
+		if (bytes_to_write > CHUNK_SIZE) {
+			write_size = CHUNK_SIZE;
+		} else {
+			write_size = bytes_to_write;
+		}
+		if ((count = fwrite(rom_addr, 1, write_size, fp_out)) != write_size) {
+			printf("ERROR: Short write while writing %s. Wrote %u bytes, expected to write %u bytes.\n",
+				out_file, count, rom_size);
+			exit(3);
+		}
+		rom_addr += write_size;
+		bytes_to_write -= write_size;
 	}
 	fclose(fp_out);
 }
 
-unsigned char *load_file(char *in_file, size_t *rom_size) {
+unsigned char __far *load_file(char *in_file, unsigned long *rom_size) {
 	FILE *fp_in;
-	size_t count;
-	unsigned char *buf;
+	size_t count, read_size;
+	unsigned long bytes_to_read;
+	unsigned char __far *buf, *read_pointer;
 	struct stat st;
 
 	if (stat(in_file, &st) == -1) {
@@ -172,7 +184,7 @@ unsigned char *load_file(char *in_file, size_t *rom_size) {
 		exit(4);
 	}
 
-	printf("Loading flash ROM image from %s, size %u bytes.\n",
+	printf("Loading flash ROM image from %s, size %lu bytes.\n",
 		in_file, *rom_size);
 
 	if ((fp_in = fopen(in_file, "rb")) == NULL) {
@@ -181,23 +193,36 @@ unsigned char *load_file(char *in_file, size_t *rom_size) {
 		exit(4);
 	}
 	
-	if ((buf = (unsigned char *) calloc (*rom_size, 1)) == NULL) {
-		printf("ERROR: Failed to allocate %u bytes for input buffer: %s.\n",
-		       *rom_size, strerror(errno));
+	if ((buf = (unsigned char __far *) halloc (*rom_size, 1)) == NULL) {
+		printf("ERROR: Failed to allocate %lu bytes for input buffer.\n",
+		       *rom_size);
 		exit(5);
 	}
-	if ((count = fread(buf, 1, *rom_size, fp_in)) != *rom_size) {
-		printf("ERROR: Short read while reading %s. Read %u bytes, expected to read %u bytes.\n",
-		       in_file, count, *rom_size);
-		exit(6);
+
+	bytes_to_read = *rom_size;
+	read_pointer = buf;
+	while (bytes_to_read > 0) {
+		if (bytes_to_read > CHUNK_SIZE) {
+			read_size = CHUNK_SIZE;
+		} else {
+			read_size = bytes_to_read;
+		}
+		if ((count = fread(read_pointer, 1, read_size, fp_in)) != read_size) {
+			printf("ERROR: Short read while reading %s. Read %u bytes, expected to read %u bytes.\n",
+			       in_file, count, read_size);
+			exit(6);
+		}
+		read_pointer += read_size;
+		bytes_to_read -= read_size;
 	}
 	fclose(fp_in);
 	return buf;
 }
 	               
-unsigned int checksum (unsigned char __far *buf_addr, size_t rom_size)
+unsigned int checksum (unsigned char __far *buf_addr, unsigned long rom_size)
 {
-	unsigned int checksum = 0, i;
+	unsigned int checksum = 0;
+	unsigned long i;
 	for (i = 0; i < rom_size; i++)
 		checksum += buf_addr[i];
 	return checksum;
@@ -305,9 +330,10 @@ int rom_erase_block(unsigned char __far *rom_start, unsigned char __far *rom_add
 	return 1;
 }
 
-int rom_program_block(unsigned char __far *rom_start, unsigned char __far *rom_addr, unsigned char *buf, unsigned int block_size, unsigned char page_write)
+int rom_program_block(unsigned char __far *rom_start, unsigned char __far *rom_addr, unsigned char __far *buf, unsigned int block_size, unsigned char page_write)
 {
-	unsigned int offset, timeout;
+	unsigned long offset;
+	unsigned int timeout;
 	volatile unsigned char __far *rom_st = rom_start;
 	volatile unsigned char __far *rom_ad = rom_addr;
 
@@ -351,11 +377,12 @@ int rom_program_block(unsigned char __far *rom_start, unsigned char __far *rom_a
 	return 1;
 }
 
-void rom_program(__segment rom_addr, unsigned char __far *buf, size_t rom_size)
+void rom_program(__segment rom_addr, unsigned char __far *buf, unsigned long rom_size)
 {
 	unsigned int eeprom_index;
 	__segment rom_start;
-	unsigned int page, num_pages, page_paragraph;
+	unsigned int page, page_paragraph;
+	unsigned long num_pages;
 
 	/* try 0xF000 first */
 	rom_start = 0xF000;
@@ -381,12 +408,12 @@ void rom_program(__segment rom_addr, unsigned char __far *buf, size_t rom_size)
 	/* figure out number of pages to program */
 	num_pages = rom_size / eeproms[eeprom_index].page_size;
 	if (num_pages * eeproms[eeprom_index].page_size != rom_size) {
-		printf("ERROR: ROM image size (%u) is is not a multiply of the flash page size.\n",
+		printf("ERROR: ROM image size (%lu) is is not a multiply of the flash page size.\n",
 			rom_size);
 		exit(10);
 	}
 
-	printf("Programming the flash ROM with %u bytes starting at address 0x%04X.\n", rom_size, rom_addr);
+	printf("Programming the flash ROM with %lu bytes starting at address 0x%04X.\n", rom_size, rom_addr);
 	printf("Please wait... Do not reboot the system...\n");
 	interrupts_disable();
 
@@ -420,8 +447,8 @@ int main(int argc, char *argv[])
 	unsigned int mode = 0;
 	__segment rom_seg = 0xF800;
 	char *in_file = NULL, *out_file = NULL;
-	unsigned char *buf;
-	size_t rom_size = CHUNK_SIZE;
+	unsigned char __far *buf;
+	unsigned long rom_size = CHUNK_SIZE;
 
 	exec_name = argv[0];
 
@@ -456,7 +483,7 @@ int main(int argc, char *argv[])
 		}
 		if (!strcmp(argv[i], "-s")) {
 			if (++i < argc) {
-				sscanf(argv[i], "%u", &rom_size);
+				sscanf(argv[i], "%lu", &rom_size);
 			} else {
 				error("Option -s requires an argument.");
 			}
