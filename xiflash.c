@@ -66,12 +66,27 @@ char *exec_name;
 unsigned int cmd_addr1 = 0x5555, cmd_addr2 = 0x2AAA;
 unsigned int loops_per_1ms = 1;		/* calibrated later by calibrate_delay() */
 
-/* FIXME: should disable NMI too */
-void interrupts_disable();
-#pragma aux interrupts_disable = "cli";
+void interrupts_disable()
+{
+	__asm {
+		cli
+		push	ax
+		mov	al,0
+		out	0xA0,al
+		pop	ax
+	}
+}
 
-void interrupts_enable();
-#pragma aux interrupts_enable = "sti";
+void interrupts_enable()
+{
+	__asm {
+		push	ax
+		mov	al,0x80
+		out	0xA0,al
+		pop	ax
+		sti
+	}
+}
 
 void usage()
 {
