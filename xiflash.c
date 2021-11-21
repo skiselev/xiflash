@@ -64,7 +64,6 @@ struct{
 char *exec_name;
 
 unsigned int cmd_addr1 = 0x5555, cmd_addr2 = 0x2AAA;
-unsigned int debug = 0;
 unsigned int loops_per_1ms = 1;		/* calibrated later by calibrate_delay() */
 
 /* FIXME: should disable NMI too */
@@ -91,8 +90,6 @@ void usage()
 	printf("          Must be in E000-F000 range. The default is F800 (BIOS address).\n");
 	printf("   -s   - Specifies ROM size for -r and -c options.\n");
 	printf("	  The default is %u.\n\n", CHUNK_SIZE);
-	printf("   -d   - Turns on debug output\n");
-
 	exit(1);
 }
 
@@ -488,9 +485,6 @@ void calibrate_delay() {
 	delay(CALIBRATION_LOOPS);
 	end_time = clock();
 	loops_per_1ms = (long) 1000*CALIBRATION_LOOPS/CLOCKS_PER_SEC/(end_time - start_time);
-	if (debug) {
-		printf("DEBUG: Delay loops per 1ms: %u\n", loops_per_1ms);
-	}
 }
 
 int main(int argc, char *argv[])
@@ -555,10 +549,6 @@ int main(int argc, char *argv[])
 		}
 		if (!strcmp(argv[i], "-c")) {
 			mode |= MODE_CHECKSUM;
-			continue;
-		}
-		if (!strcmp(argv[i], "-d")) {
-			debug = 1;
 			continue;
 		}
 		error("Invalid command line argument.");
