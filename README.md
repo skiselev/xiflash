@@ -6,7 +6,7 @@ The xiflash utility is a flash ROM utility for Xi 8088 and Micro 8088 systems. T
 
 The utility can program any series of consecutive flash ROM sectors, also known as pages or blocks, mapped to the system's memory with the provided image file. Thus it is possible to reprogram other parts of the flash ROM, for example program a BIOS extension ROM, like XT-IDE BIOS, to the available ROM space.
 
-By default xiflash works on 0xF8000-0xFFFFF range, which is normally used by system's BIOS, unless progamming or verifying 64 KiB images, in which case the default is to use 0xF0000-0xFFFFF range.
+By default xiflash works on 0xF8000-0xFFFFF range, which is normally used by system's BIOS, unless progamming or verifying 64 KiB images or 128 KiB images, in which case the default is to use 0xF0000-0xFFFFF range or 0xE0000-0xFFFFF range respectively.
 
 ## Important Notes
 
@@ -34,6 +34,10 @@ Note: It is assumed that xt-ide.bin is smaller that 32 KiB and won't overwrite s
 
 ## Release Notes
 
+### Version 0.3 - November 22, 2021
+* Updated delay function to use 8254 PIT for timing
+* Added a check to set starting ROM address to E000 when 128 KiB image is programmed
+
 ### Version 0.2 - November 21, 2021
 * Updated delay function to work both on Xi 8088 and Micro 8088 systems
 * Implemented support for 64 KiB flash images, with some ideas borrowed from from uflash by Aitor Gomez (spark2k06)
@@ -47,7 +51,6 @@ This is the initial release. It supports the following flash ROM devices:
 * Winbond W29EE011
 * SST SST29EE010 / Greenliant GLS29EE010
 * SST / Microchip SST39SF010
-
 
 ## Known Issues and Limitations
 
