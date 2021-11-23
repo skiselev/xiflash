@@ -599,8 +599,12 @@ int main(int argc, char *argv[])
 	if ((mode & MODE_PROG) || (mode & MODE_VERIFY) ||
 	    ((mode & MODE_CHECKSUM) && in_file != NULL)) {
 		buf = load_file(in_file, &rom_size);
-		if (rom_size == 65536 && rom_seg == 0xF800) {
-			rom_seg = 0xF000;	/* set default ROM segment to F0000 for 64 KiB images */
+		if (rom_seg == 0xF800) {
+			if (rom_size == 65536) {
+				rom_seg = 0xF000;	/* set default ROM segment to F0000 for 64 KiB images */
+			} else if (rom_size == 131072) {
+				rom_seg = 0xE000;
+			}
 		}
 		/* check if ROM size extends beyond 1 MiB */
 		if ((rom_size + 15) / 16 - 1 + rom_seg < rom_seg) {
