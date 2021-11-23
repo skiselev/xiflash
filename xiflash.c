@@ -31,7 +31,7 @@
 #include <malloc.h>
 #include <dos.h>
 
-#define VERSION		"0.2"
+#define VERSION		"0.3"
 #define CHUNK_SIZE	32768
 
 #define MODE_READ	1
@@ -40,17 +40,12 @@
 #define MODE_CHECKSUM	(1 << 3)
 
 
-/* number of calibration loops to run */
-#define CALIBRATION_LOOPS 100
-/* delay units in second */
-#define DELAY_PER_SEC 20000					/* one delay loop is 1/20000 = 50 us */
-#define IDENTIFY_DELAY (DELAY_PER_SEC/5000)			/* flash ID delay is 1/5000 = 200 us */
-#define WRITE_DELAY (DELAY_PER_SEC/20000)			/* write/erase delay is 1/20000 = 50 us */
-#define ERASE_TIMEOUT (DELAY_PER_SEC/10/WRITE_DELAY)		/* page erase timeout is 1/10 = 100 ms */
-#define PAGE_WRITE_TIMEOUT (DELAY_PER_SEC/10/WRITE_DELAY)	/* page write timeout is 1/10 = 100 ms */
-#define BYTE_WRITE_TIMEOUT (DELAY_PER_SEC/100/WRITE_DELAY)	/* byte write timeout is 1/100 = 10 ms */
-
-unsigned int loops_per_delay = CALIBRATION_LOOPS;	/* calibrated by calibrate_delay() */
+#define TICKS_PER_SEC 1193182					/* 8254 PIT ticks per second */
+#define IDENTIFY_DELAY (TICKS_PER_SEC/100)			/* flash ID delay is 1/100 = 10 ms */
+#define WRITE_DELAY (TICKS_PER_SEC/20000)			/* write/erase delay is 1/20000 = 50 us */
+#define ERASE_TIMEOUT (TICKS_PER_SEC/10/WRITE_DELAY)		/* page erase timeout is 1/10 = 100 ms */
+#define PAGE_WRITE_TIMEOUT (TICKS_PER_SEC/10/WRITE_DELAY)	/* page write timeout is 1/10 = 100 ms */
+#define BYTE_WRITE_TIMEOUT (TICKS_PER_SEC/100/WRITE_DELAY)	/* byte write timeout is 1/100 = 10 ms */
 
 #define NUM_DEVICES 5
 
@@ -115,58 +110,38 @@ void usage()
 	exit(1);
 }
 
-void error(char *message) {
+void error(char *message)
+{
 	printf("ERROR: %s\n\n", message);
 	usage();
 }
 
-void do_delay(unsigned int delay, unsigned int loops_per_delay);
-#pragma aux do_delay = \
-"	delay_loop_1:				" \
-"		mov	cx,bx			" \
-"	delay_loop_2:				" \
-"		loop	delay_loop_2		" \
-"		dec	ax			" \
-"		jnz	delay_loop_1		" \
-parm [ax] [bx] modify [ax cx];
-
-void calibrate_delay() {
-	volatile unsigned int calibration_ticks = 0, timer_count = 0;
+void pit_delay(unsigned int ticks)
+{
 	__asm {
 		push	ax
-		push	cx
-		cli				/* disable interrupts for precise timing */
+		push	bx
 		in	al,0x61
-		mov	ah,al			/* save PORT B to AH */
-		and	al,0xFE			/* disable 8254 PIT channel 2 GATE */
-		out	0x61,al			/* write to PORT B */
-		mov	al,0xB8			/* set PIT channel 2 to mode 4 */
+		or	al,0x01			/* enable 8254 PIT channel 2 */
+		out	0x61,al			/* write to 8255 PPI port B */
+		mov	bl,al			/* save written value for XT/AT test */
+		mov	al,0xB0			/* set PIT channel 2 to mode 0 */
 		out	0x43,al			/* write control word to PIT */
-		mov	al,0xFF			/* set PIT channel 2 count to 0xFFFF */
-		out	0x42,al			/* write LSB to PIT channel 2 */
-		out	0x42,al			/* write MSB to PIT channel 2 */
+		mov	ax,ticks
+		out	0x42,al			/* set PIT channel 2 inital count - low byte */
 		mov	al,ah
-		mov	cx,CALIBRATION_LOOPS	/* loop iteration to time */
-		or	al,0x01			/* enable PIT channel 2 - start counting */
-		out	0x61,al			/* write to PORT B */
-	calibration_loop:
-		loop	calibration_loop
-		and	al,0x0FE		/* disable PIT channel 2 - stop counting */
-		out	0x61,al
-		in	al,0x42			/* read LSB from PIT channel 2 */
-		mov	cl,al
-		in	al,0x42			/* read MSB from PIT channel 2 */
-		mov	ch,al
-		sti				/* re-enable interrupts */
-		mov	timer_count,cx
-		mov	ax,0xFFFF
-		sub	ax,cx
-		mov	calibration_ticks,ax	/* number of 1.193182 MHz timer intervals to run the calbration loop */
-		pop	cx
+		out	0x42,al			/* set PIT channel 2 inital count - high byte */
+	delay_loop:
+		in	al,0x61			/* try reading port B first */
+		cmp	al,bl
+		jne	delay_test		/* port B value had changed, must be Xi 8088 (or an AT) */
+		in	al,0x62			/* read PPI port C */
+	delay_test:
+		test	al,0x20			/* check if bit 5 set - PIT channel 2 output */
+		jz	delay_loop		/* not set, keep waiting */
+		pop	bx
 		pop	ax
 	}
-
-	loops_per_delay = (unsigned long) CALIBRATION_LOOPS * 1193182 / DELAY_PER_SEC / calibration_ticks;
 }
 
 unsigned char __far *get_video_address()
@@ -340,7 +315,7 @@ int rom_identify(unsigned char __far *rom_start)
 	rom_st[cmd_addr1] = 0xAA;
 	rom_st[cmd_addr2] = 0x55;
 	rom_st[cmd_addr1] = 0x90;
-	do_delay(IDENTIFY_DELAY, loops_per_delay);
+	pit_delay(IDENTIFY_DELAY);
 
 	vendor_id = rom_st[0];
 	device_id = rom_st[1];
@@ -353,7 +328,7 @@ int rom_identify(unsigned char __far *rom_start)
 		rom_st[cmd_addr1] = 0xAA;
 		rom_st[cmd_addr2] = 0x55;
 		rom_st[cmd_addr1] = 0x60;
-		do_delay(IDENTIFY_DELAY, loops_per_delay);
+		pit_delay(IDENTIFY_DELAY);
 
 		vendor_id = rom_st[0];
 		device_id = rom_st[1];
@@ -370,7 +345,7 @@ int rom_identify(unsigned char __far *rom_start)
 		rom_st[cmd_addr1] = 0xAA;
 		rom_st[cmd_addr2] = 0x55;
 		rom_st[cmd_addr1] = 0x60;
-		do_delay(IDENTIFY_DELAY, loops_per_delay);
+		pit_delay(IDENTIFY_DELAY);
 
 		vendor_id = rom_st[0];
 		device_id = rom_st[1];
@@ -380,7 +355,7 @@ int rom_identify(unsigned char __far *rom_start)
 	rom_st[cmd_addr1] = 0xAA;
 	rom_st[cmd_addr2] = 0x55;
 	rom_st[cmd_addr1] = 0xF0;
-	do_delay(IDENTIFY_DELAY, loops_per_delay);
+	pit_delay(IDENTIFY_DELAY);
 
 	interrupts_enable();
 
@@ -418,7 +393,7 @@ int rom_erase_block(unsigned char __far *rom_start, unsigned char __far *rom_add
 	for (timeout = 0; timeout < ERASE_TIMEOUT; timeout++) {
 		if (rom_ad[0] == 0xFF)
 			return 0;
-		do_delay(WRITE_DELAY, loops_per_delay);
+		pit_delay(WRITE_DELAY);
 	}
 
 	return 1;
@@ -445,7 +420,7 @@ int rom_program_block(unsigned char __far *rom_start, unsigned char __far *rom_a
 		for (timeout = 0; timeout < PAGE_WRITE_TIMEOUT; timeout++) {
 			if (rom_ad[block_size - 1] == buf[block_size - 1])
 				return 0;
-			do_delay(WRITE_DELAY, loops_per_delay);
+			pit_delay(WRITE_DELAY);
 		}
 	} else {
 		for (offset = 0; offset < block_size; offset++) {
@@ -461,7 +436,7 @@ int rom_program_block(unsigned char __far *rom_start, unsigned char __far *rom_a
 			for (timeout = 0; timeout < BYTE_WRITE_TIMEOUT; timeout++) {
 				if (rom_ad[offset] == buf[offset])
 					break;
-				do_delay(WRITE_DELAY, loops_per_delay);
+				pit_delay(WRITE_DELAY);
 			}
 			if (timeout == BYTE_WRITE_TIMEOUT)
 				break;
@@ -516,23 +491,21 @@ void rom_program(__segment rom_addr, unsigned char __far *buf, unsigned long rom
 	if (num_pages > 40) {
 		pages_per_column = num_pages / 32;
 	}
-	video_write_char(video_address, '[', 0x07);
 	for (page = 0; page < num_pages; page++) {
-		video_write_char(video_address + (page / pages_per_column + 1) * 2, 0xB0, 0x07);
+		video_write_char(video_address + (page / pages_per_column) * 2, 0xB0, 0x07);
 	}
-	video_write_char(video_address + (num_pages / pages_per_column + 1) * 2, ']', 0x07);
 	interrupts_disable();
 
 	for (page = 0; page < num_pages; page++) {
 		outp(0x80, page);
 		if (eeproms[eeprom_index].need_erase) {
-			video_write_char(video_address + (page / pages_per_column + 1) * 2, 'E', 0x07);
+			video_write_char(video_address + (page / pages_per_column) * 2, 'E', 0x07);
 			rom_erase_block(rom_start:>0, rom_addr:>(eeproms[eeprom_index].page_size * page));
 			/* note: not checking the exit code, will try to program the flash ROM anyway */
 		}
-		video_write_char(video_address + (page / pages_per_column + 1) * 2, 'P', 0x07);
+		video_write_char(video_address + (page / pages_per_column) * 2, 'P', 0x07);
 		rom_program_block(rom_start:>0, rom_addr:>(eeproms[eeprom_index].page_size * page), buf + (eeproms[eeprom_index].page_size * page), eeproms[eeprom_index].page_size, eeproms[eeprom_index].page_write);
-		video_write_char(video_address + (page / pages_per_column + 1) * 2, 0xDB, 0x07);
+		video_write_char(video_address + (page / pages_per_column) * 2, 0xDB, 0x07);
 	}
 
 	interrupts_enable();
@@ -645,7 +618,6 @@ int main(int argc, char *argv[])
 	}
 
 	if (mode & MODE_PROG) {
-		calibrate_delay();
 		rom_program(rom_seg, buf, rom_size);
 	}
 
