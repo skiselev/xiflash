@@ -34,6 +34,9 @@ Note: It is assumed that xt-ide.bin is smaller that 32 KiB and won't overwrite s
 
 ## Release Notes
 
+### Version 0.4 - November 29, 2021
+* Fixed programming ROM images larger than 64 KiB
+
 ### Version 0.3 - November 22, 2021
 * Updated delay function to use 8254 PIT for timing
 * Added a check to set starting ROM address to E000 when 128 KiB image is programmed

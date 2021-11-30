@@ -31,13 +31,13 @@
 #include <malloc.h>
 #include <dos.h>
 
-#define VERSION		"0.3"
-#define CHUNK_SIZE	32768
+#define VERSION			"0.4"
+#define DEFAULT_ROM_SIZE	32768
 
-#define MODE_READ	1
-#define MODE_PROG	(1 << 1)
-#define MODE_VERIFY	(1 << 2)
-#define MODE_CHECKSUM	(1 << 3)
+#define MODE_READ		1
+#define MODE_PROG		(1 << 1)
+#define MODE_VERIFY		(1 << 2)
+#define MODE_CHECKSUM		(1 << 3)
 
 
 #define TICKS_PER_SEC 1193182					/* 8254 PIT ticks per second */
@@ -103,10 +103,10 @@ void usage()
 	printf("   -i   - Specifies input file for -p, -v, and, -c options.\n");
 	printf("   -o   - Specifies output file for -r option.\n");
 	printf("   -a   - Segment address of flash ROM area to work on in hexadecimal format.\n");
-	printf("          Must be in E000-F000 range. The default is F800 (BIOS address).\n");
-	printf("          When programming 64 KiB images, the default is F000.\n");
+	printf("          Must be in E000-F000 range. The default is F800 (BIOS address) for\n");
+	printf("          32 KiB images, F000 for 64 KiB images, and E000 for 128 KiB images.\n");
 	printf("   -s   - Specifies ROM size for -r and -c options.\n");
-	printf("	  The default is %u.\n\n", CHUNK_SIZE);
+	printf("	  The default is %u.\n\n", DEFAULT_ROM_SIZE);
 	exit(1);
 }
 
@@ -185,14 +185,31 @@ void video_write_char(unsigned char __far *video_address, unsigned char ch, unsi
 	}
 }
 
-void rom_verify(unsigned char __far *rom_addr, unsigned char __far *buf, unsigned long rom_size) {
-	unsigned long i, diff = 0;
+void rom_verify(__segment rom_seg, __segment file_seg, unsigned long rom_size) {
+	unsigned long bytes_to_verify, verify_size, offset, diff = 0;
+	unsigned char rom_data, file_data;
 
-	for (i = 0; i < rom_size; i++) {
-		if (rom_addr[i] != buf[i]) {
-			printf("WARNING: Difference found at 0x%05X: ROM = 0x%02X; file 0x%02X\n", i, rom_addr[i], buf[i]);
-			diff++;
-		}	
+	bytes_to_verify = rom_size;
+	while (bytes_to_verify > 0) {
+		/* verify up to 64 KiB at a time */
+		if (bytes_to_verify > 0x10000) {
+			verify_size = 0x10000;
+		} else {
+			verify_size = bytes_to_verify;
+		}
+		for (offset = 0; offset < verify_size; offset++) {
+			rom_data = ((unsigned char __far *)rom_seg:>0)[offset];
+			file_data = ((unsigned char __far *)file_seg:>0)[offset];
+
+			if (rom_data != file_data) {
+				printf("WARNING: Difference found at 0x%04X:%04X: ROM = 0x%02X; file 0x%02X\n", rom_seg, (unsigned int) offset, rom_data, file_data);
+				diff++;
+			}
+		}
+		/* advance addresses by 64 KiB by incrementing the segment */
+		rom_seg += 0x1000;
+		file_seg += 0x1000;
+		bytes_to_verify -= verify_size;
 	}
 
 	if (diff > 0) {
@@ -203,7 +220,7 @@ void rom_verify(unsigned char __far *rom_addr, unsigned char __far *buf, unsigne
 }
 
 /* rom_read - DUMP ROM content to a file */
-void rom_read(unsigned char __far *rom_addr, char *out_file, unsigned long rom_size) {
+void rom_read(__segment rom_seg, char *out_file, unsigned long rom_size) {
 	FILE *fp_out;
 	size_t count, write_size;
 	unsigned long bytes_to_write = rom_size;
@@ -218,27 +235,28 @@ void rom_read(unsigned char __far *rom_addr, char *out_file, unsigned long rom_s
 	}
 	
 	while (bytes_to_write > 0) {
-		if (bytes_to_write > CHUNK_SIZE) {
-			write_size = CHUNK_SIZE;
+		if (bytes_to_write > 0x8000) {
+			write_size = 0x8000;
 		} else {
 			write_size = bytes_to_write;
 		}
-		if ((count = fwrite(rom_addr, 1, write_size, fp_out)) != write_size) {
+		if ((count = fwrite(rom_seg:>0, 1, write_size, fp_out)) != write_size) {
 			printf("ERROR: Short write while writing %s. Wrote %u bytes, expected to write %u bytes.\n",
-				out_file, count, rom_size);
+				out_file, count, write_size);
 			exit(3);
 		}
-		rom_addr += write_size;
+		/* advance write address by 32 KiB by incrementing the segment */
+		rom_seg += 0x0800;
 		bytes_to_write -= write_size;
 	}
 	fclose(fp_out);
 }
 
-unsigned char __far *load_file(char *in_file, unsigned long *rom_size) {
+__segment load_file(char *in_file, unsigned long *rom_size) {
 	FILE *fp_in;
 	size_t count, read_size;
-	unsigned long bytes_to_read;
-	unsigned char __far *buf, *read_pointer;
+	unsigned long bytes_to_read, buf_addr;
+	__segment file_segment, read_segment;
 	struct stat st;
 
 	if (stat(in_file, &st) == -1) {
@@ -262,76 +280,96 @@ unsigned char __far *load_file(char *in_file, unsigned long *rom_size) {
 		exit(4);
 	}
 	
-	if ((buf = (unsigned char __far *) halloc (*rom_size, 1)) == NULL) {
+	if ((buf_addr = (unsigned long) halloc (*rom_size, 1)) == 0x0) {
 		printf("ERROR: Failed to allocate %lu bytes for input buffer.\n",
 		       *rom_size);
 		exit(5);
 	}
+	/* calculate the segment and the offset of the buffer */
+	file_segment = buf_addr >> 16;
+	if ((buf_addr & 0xFFFF) != 0) {
+		printf("ERROR: halloc() returned address with non-zero offset: 0x%08lX\n, buf_addr");
+		exit(5);
+
+	}
 
 	bytes_to_read = *rom_size;
-	read_pointer = buf;
+	read_segment = file_segment;
 	while (bytes_to_read > 0) {
-		if (bytes_to_read > CHUNK_SIZE) {
-			read_size = CHUNK_SIZE;
+		/* read up to 32 KiB at a time */
+		if (bytes_to_read > 0x8000) {
+			read_size = 0x8000;
 		} else {
 			read_size = bytes_to_read;
 		}
-		if ((count = fread(read_pointer, 1, read_size, fp_in)) != read_size) {
+		if ((count = fread(read_segment:>0, 1, read_size, fp_in)) != read_size) {
 			printf("ERROR: Short read while reading %s. Read %u bytes, expected to read %u bytes.\n",
 			       in_file, count, read_size);
 			exit(6);
 		}
-		read_pointer += read_size;
+		/* advance read address by 32 KiB by incrementing the segment */
+		read_segment += 0x0800;
 		bytes_to_read -= read_size;
 	}
 	fclose(fp_in);
-	return buf;
+	return file_segment;
 }
 	               
-unsigned int checksum (unsigned char __far *buf_addr, unsigned long rom_size)
+unsigned int checksum (__segment data_seg, unsigned long rom_size)
 {
-	unsigned int checksum = 0;
-	unsigned long i;
-	for (i = 0; i < rom_size; i++)
-		checksum += buf_addr[i];
+	unsigned int checksum_size, checksum = 0;
+	unsigned long bytes_to_checksum = rom_size, offset;
+	while (bytes_to_checksum > 0) {
+		if (bytes_to_checksum > 0x8000) {
+			checksum_size = 0x8000;
+		} else {
+			checksum_size = bytes_to_checksum;
+		}
+		for (offset = 0; offset < checksum_size; offset++) {
+			checksum += ((unsigned char __far *) data_seg:>0)[offset];
+		}
+		/* advance checksum address by 32 KiB by incrementing the segment */
+		data_seg += 0x0800;
+		bytes_to_checksum -= checksum_size;
+	}
 	return checksum;
 }
 
 /* rom_identify - Identify flash ROM type, return index in eeprom table and start segment */
-int rom_identify(unsigned char __far *rom_start)
+int rom_identify(__segment rom_seg)
 {
 	int index = -1;
-	volatile unsigned char __far *rom_st = rom_start;
+	volatile unsigned char __far *rom_start = rom_seg:>0;
 	unsigned char byte0, byte1, vendor_id, device_id;
 
-	byte0 = rom_st[0];
-	byte1 = rom_st[1];
+	byte0 = rom_start[0];
+	byte1 = rom_start[1];
 
 	cmd_addr1 = 0x5555;
 	cmd_addr2 = 0x2AAA;
 
 	/* Enter software ID mode */
 	interrupts_disable();
-	rom_st[cmd_addr1] = 0xAA;
-	rom_st[cmd_addr2] = 0x55;
-	rom_st[cmd_addr1] = 0x90;
+	rom_start[cmd_addr1] = 0xAA;
+	rom_start[cmd_addr2] = 0x55;
+	rom_start[cmd_addr1] = 0x90;
 	pit_delay(IDENTIFY_DELAY);
 
-	vendor_id = rom_st[0];
-	device_id = rom_st[1];
+	vendor_id = rom_start[0];
+	device_id = rom_start[1];
 
 	if (vendor_id == byte0 && device_id == byte1) {
 		/* Try alternate software ID mode */
-		rom_st[cmd_addr1] = 0xAA;
-		rom_st[cmd_addr2] = 0x55;
-		rom_st[cmd_addr1] = 0x80;
-		rom_st[cmd_addr1] = 0xAA;
-		rom_st[cmd_addr2] = 0x55;
-		rom_st[cmd_addr1] = 0x60;
+		rom_start[cmd_addr1] = 0xAA;
+		rom_start[cmd_addr2] = 0x55;
+		rom_start[cmd_addr1] = 0x80;
+		rom_start[cmd_addr1] = 0xAA;
+		rom_start[cmd_addr2] = 0x55;
+		rom_start[cmd_addr1] = 0x60;
 		pit_delay(IDENTIFY_DELAY);
 
-		vendor_id = rom_st[0];
-		device_id = rom_st[1];
+		vendor_id = rom_start[0];
+		device_id = rom_start[1];
 	}
 
 	if (vendor_id == byte0 && device_id == byte1) {
@@ -339,22 +377,22 @@ int rom_identify(unsigned char __far *rom_start)
 		cmd_addr1 = 0x555;
 		cmd_addr2 = 0x2AA;
 
-		rom_st[cmd_addr1] = 0xAA;
-		rom_st[cmd_addr2] = 0x55;
-		rom_st[cmd_addr1] = 0x80;
-		rom_st[cmd_addr1] = 0xAA;
-		rom_st[cmd_addr2] = 0x55;
-		rom_st[cmd_addr1] = 0x60;
+		rom_start[cmd_addr1] = 0xAA;
+		rom_start[cmd_addr2] = 0x55;
+		rom_start[cmd_addr1] = 0x80;
+		rom_start[cmd_addr1] = 0xAA;
+		rom_start[cmd_addr2] = 0x55;
+		rom_start[cmd_addr1] = 0x60;
 		pit_delay(IDENTIFY_DELAY);
 
-		vendor_id = rom_st[0];
-		device_id = rom_st[1];
+		vendor_id = rom_start[0];
+		device_id = rom_start[1];
 	}
 
 	/* Exit software ID mode */
-	rom_st[cmd_addr1] = 0xAA;
-	rom_st[cmd_addr2] = 0x55;
-	rom_st[cmd_addr1] = 0xF0;
+	rom_start[cmd_addr1] = 0xAA;
+	rom_start[cmd_addr2] = 0x55;
+	rom_start[cmd_addr1] = 0xF0;
 	pit_delay(IDENTIFY_DELAY);
 
 	interrupts_enable();
@@ -375,23 +413,23 @@ int rom_identify(unsigned char __far *rom_start)
 	return index;
 }
 
-int rom_erase_block(unsigned char __far *rom_start, unsigned char __far *rom_addr)
+int rom_erase_page(__segment rom_seg, __segment page_seg)
 {
 	unsigned int timeout;
-	volatile unsigned char __far *rom_st = rom_start;
-	volatile unsigned char __far *rom_ad = rom_addr;
+	volatile unsigned char __far *rom_start = rom_seg:>0;
+	volatile unsigned char __far *rom_address = page_seg:>0;
 
 	/* Enter page erase mode */
-	rom_st[cmd_addr1] = 0xAA;
-	rom_st[cmd_addr2] = 0x55;
-	rom_st[cmd_addr1] = 0x80;
-	rom_st[cmd_addr1] = 0xAA;
-	rom_st[cmd_addr2] = 0x55;
-	rom_ad[0] = 0x30;
+	rom_start[cmd_addr1] = 0xAA;
+	rom_start[cmd_addr2] = 0x55;
+	rom_start[cmd_addr1] = 0x80;
+	rom_start[cmd_addr1] = 0xAA;
+	rom_start[cmd_addr2] = 0x55;
+	rom_address[0] = 0x30;
 
 	/* poll EPROM - wait for erase operation to complete */
 	for (timeout = 0; timeout < ERASE_TIMEOUT; timeout++) {
-		if (rom_ad[0] == 0xFF)
+		if (rom_address[0] == 0xFF)
 			return 0;
 		pit_delay(WRITE_DELAY);
 	}
@@ -399,69 +437,68 @@ int rom_erase_block(unsigned char __far *rom_start, unsigned char __far *rom_add
 	return 1;
 }
 
-int rom_program_block(unsigned char __far *rom_start, unsigned char __far *rom_addr, unsigned char __far *buf, unsigned int block_size, unsigned char page_write)
+int rom_program_page(__segment rom_seg, __segment page_seg, __segment file_seg, unsigned int page_size, unsigned char page_write)
 {
-	unsigned long offset;
-	unsigned int timeout;
-	volatile unsigned char __far *rom_st = rom_start;
-	volatile unsigned char __far *rom_ad = rom_addr;
+	unsigned int offset, timeout;
+	volatile unsigned char __far *rom_start = rom_seg:>0;
+	volatile unsigned char __far *rom_address = page_seg:>0;
+	unsigned char __far *file_address = file_seg:>0;
 
 	if (page_write) {
 		/* Enter page write mode */
-		rom_st[cmd_addr1] = 0xAA;
-		rom_st[cmd_addr2] = 0x55;
-		rom_st[cmd_addr1] = 0xA0;
+		rom_start[cmd_addr1] = 0xAA;
+		rom_start[cmd_addr2] = 0x55;
+		rom_start[cmd_addr1] = 0xA0;
 
 		/* write page */
-		for (offset = 0; offset < block_size; offset++)
-			rom_ad[offset] = buf[offset];
+		for (offset = 0; offset < page_size; offset++)
+			rom_address[offset] = file_address[offset];
 
 		/* poll EPROM - wait for write operation to complete */
 		for (timeout = 0; timeout < PAGE_WRITE_TIMEOUT; timeout++) {
-			if (rom_ad[block_size - 1] == buf[block_size - 1])
+			if (rom_address[page_size - 1] == file_address[page_size - 1])
 				return 0;
 			pit_delay(WRITE_DELAY);
 		}
 	} else {
-		for (offset = 0; offset < block_size; offset++) {
+		for (offset = 0; offset < page_size; offset++) {
 			/* Enter write mode */
-			rom_st[cmd_addr1] = 0xAA;
-			rom_st[cmd_addr2] = 0x55;
-			rom_st[cmd_addr1] = 0xA0;
+			rom_start[cmd_addr1] = 0xAA;
+			rom_start[cmd_addr2] = 0x55;
+			rom_start[cmd_addr1] = 0xA0;
 
 			/* write byte */
-			rom_ad[offset] = buf[offset];
+			rom_address[offset] = file_address[offset];
 
 			/* verify byte */
 			for (timeout = 0; timeout < BYTE_WRITE_TIMEOUT; timeout++) {
-				if (rom_ad[offset] == buf[offset])
+				if (rom_address[offset] == file_address[offset])
 					break;
 				pit_delay(WRITE_DELAY);
 			}
 			if (timeout == BYTE_WRITE_TIMEOUT)
 				break;
 		}
-		if (offset == block_size)
+		if (offset == page_size)
 			return 0;
 	}
 
 	return 1;
 }
 
-void rom_program(__segment rom_addr, unsigned char __far *buf, unsigned long rom_size)
+void rom_program(__segment rom_seg, __segment file_seg, unsigned long rom_size)
 {
 	unsigned int eeprom_index;
 	__segment rom_start;
-	unsigned int page, page_paragraph, pages_per_column = 1;
-	unsigned long num_pages;
+	unsigned int page, page_size, num_pages, page_paragraph, pages_per_column = 1;
 	unsigned char __far *video_address;
 
 	/* try 0xF000 first */
 	rom_start = 0xF000;
-	if ((eeprom_index = rom_identify(rom_start:>0)) == -1) {
+	if ((eeprom_index = rom_identify(rom_start)) == -1) {
 		/* try 0xE000 */
 		rom_start = 0xE000;
-		if ((eeprom_index = rom_identify(rom_start:>0)) == -1) {
+		if ((eeprom_index = rom_identify(rom_start)) == -1) {
 			error("Cannot detect flash ROM type.\nOn Sergey's XT Version 1.0 systems make sure that SW2.6 - SW2.7 are OFF.");
 		}
 	}
@@ -470,22 +507,23 @@ void rom_program(__segment rom_addr, unsigned char __far *buf, unsigned long rom
 		rom_start, eeproms[eeprom_index].vendor_name, eeproms[eeprom_index].device_name,
 		eeproms[eeprom_index].page_size);
 
+	page_size = eeproms[eeprom_index].page_size;
 	/* check that requested ROM segment is on the page boundary */
-	page_paragraph = eeproms[eeprom_index].page_size / 16;
-	if ((rom_addr / page_paragraph) * page_paragraph != rom_addr) {
-		printf("ERROR: Specified ROM address (0x%04X) doesn't start on the page boundary.\n",
-			rom_addr);
+	page_paragraph = page_size >> 4;
+	if ((rom_seg / page_paragraph) * page_paragraph != rom_seg) {
+		printf("ERROR: Specified ROM segment (0x%04X) doesn't start on the page boundary.\n",
+			rom_seg);
 	}
 
 	/* figure out number of pages to program */
-	num_pages = rom_size / eeproms[eeprom_index].page_size;
-	if (num_pages * eeproms[eeprom_index].page_size != rom_size) {
+	num_pages = rom_size / page_size;
+	if ((unsigned long) num_pages * page_size != rom_size) {
 		printf("ERROR: ROM image size (%lu) is is not a multiply of the flash page size.\n",
 			rom_size);
 		exit(10);
 	}
 
-	printf("Programming the flash ROM with %lu bytes starting at address 0x%04X.\n", rom_size, rom_addr);
+	printf("Programming the flash ROM with %lu bytes starting at address 0x%04X:0000.\n", rom_size, rom_seg);
 	printf("Please wait. Do not reboot the system!\n");
 	video_address = get_video_address();
 	if (num_pages > 40) {
@@ -500,12 +538,14 @@ void rom_program(__segment rom_addr, unsigned char __far *buf, unsigned long rom
 		outp(0x80, page);
 		if (eeproms[eeprom_index].need_erase) {
 			video_write_char(video_address + (page / pages_per_column) * 2, 'E', 0x07);
-			rom_erase_block(rom_start:>0, rom_addr:>(eeproms[eeprom_index].page_size * page));
+			rom_erase_page(rom_start, rom_seg);
 			/* note: not checking the exit code, will try to program the flash ROM anyway */
 		}
 		video_write_char(video_address + (page / pages_per_column) * 2, 'P', 0x07);
-		rom_program_block(rom_start:>0, rom_addr:>(eeproms[eeprom_index].page_size * page), buf + (eeproms[eeprom_index].page_size * page), eeproms[eeprom_index].page_size, eeproms[eeprom_index].page_write);
+		rom_program_page(rom_start, rom_seg, file_seg, page_size, eeproms[eeprom_index].page_write);
 		video_write_char(video_address + (page / pages_per_column) * 2, 0xDB, 0x07);
+		rom_seg += page_size >> 4;
+		file_seg += page_size >> 4;
 	}
 
 	interrupts_enable();
@@ -516,10 +556,9 @@ int main(int argc, char *argv[])
 {
  	int i;
 	unsigned int mode = 0;
-	__segment rom_seg = 0xF800;
+	__segment rom_seg = 0xF800, file_seg;
 	char *in_file = NULL, *out_file = NULL;
-	unsigned char __far *buf;
-	unsigned long rom_size = CHUNK_SIZE;
+	unsigned long rom_size = DEFAULT_ROM_SIZE;
 
 	exec_name = argv[0];
 
@@ -549,7 +588,7 @@ int main(int argc, char *argv[])
 			if (++i < argc) {
 				sscanf(argv[i], "%x", &rom_seg);
 				if (rom_seg < 0xE000)
-					error("Invalid address specified (it has to be in E000-FFFF range).");
+					error("Invalid ROM segment specified (must be in E000-FFFF range).");
 			} else {
 				error("Option -a requires an argument.");
 			}
@@ -594,11 +633,11 @@ int main(int argc, char *argv[])
 		error("No input file specified for verify mode.");
 
 	if (mode & MODE_READ)
-		rom_read(rom_seg:>0, out_file, rom_size);
+		rom_read(rom_seg, out_file, rom_size);
 	
 	if ((mode & MODE_PROG) || (mode & MODE_VERIFY) ||
 	    ((mode & MODE_CHECKSUM) && in_file != NULL)) {
-		buf = load_file(in_file, &rom_size);
+		file_seg = load_file(in_file, &rom_size);
 		if (rom_seg == 0xF800) {
 			if (rom_size == 65536) {
 				rom_seg = 0xF000;	/* set default ROM segment to F0000 for 64 KiB images */
@@ -614,19 +653,19 @@ int main(int argc, char *argv[])
 
 	if (mode & MODE_CHECKSUM) {
 		if (NULL == in_file)
-			printf("Current ROM checksum at 0x%X is 0x%X\n", rom_seg,
-			       checksum(rom_seg:>0, rom_size));
+			printf("Current ROM checksum at 0x%X:0000 is 0x%X\n", rom_seg,
+			       checksum(rom_seg, rom_size));
 		else
 			printf("The checksum of %s is 0x%X\n", in_file,
-			       checksum(buf, rom_size));
+			       checksum(file_seg, rom_size));
 	}
 
 	if (mode & MODE_PROG) {
-		rom_program(rom_seg, buf, rom_size);
+		rom_program(rom_seg, file_seg, rom_size);
 	}
 
 	if (mode & MODE_VERIFY) {
-		rom_verify(rom_seg:>0, buf, rom_size);
+		rom_verify(rom_seg, file_seg, rom_size);
 	}
 
 	return 0;
