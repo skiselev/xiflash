@@ -103,7 +103,7 @@ void usage()
 	printf("   -i   - Specifies input file for -p, -v, and, -c options.\n");
 	printf("   -o   - Specifies output file for -r option.\n");
 	printf("   -a   - Segment address of flash ROM area to work on in hexadecimal format.\n");
-	printf("          Must be in E000-F000 range. The default is F800 (BIOS address) for\n");
+	printf("          Must be in C000-FFFF range. The default is F800 (BIOS address) for\n");
 	printf("          32 KiB images, F000 for 64 KiB images, and E000 for 128 KiB images.\n");
 	printf("   -s   - Specifies ROM size for -r and -c options.\n");
 	printf("	  The default is %u.\n\n", DEFAULT_ROM_SIZE);
@@ -493,13 +493,21 @@ void rom_program(__segment rom_seg, __segment file_seg, unsigned long rom_size)
 	unsigned int page, page_size, num_pages, page_paragraph, pages_per_column = 1;
 	unsigned char __far *video_address;
 
-	/* try 0xF000 first */
-	rom_start = 0xF000;
-	if ((eeprom_index = rom_identify(rom_start)) == -1) {
-		/* try 0xE000 */
-		rom_start = 0xE000;
+	if (rom_seg < 0xE000) {
+		/* if not flashing system ROM BIOS area, assume that the ROM starts at the ROM segment */
+		rom_start = rom_seg;
 		if ((eeprom_index = rom_identify(rom_start)) == -1) {
-			error("Cannot detect flash ROM type.\nOn Sergey's XT Version 1.0 systems make sure that SW2.6 - SW2.7 are OFF.");
+			error("Cannot detect flash ROM type.\nMake sure that flash ROM is not write protected.");
+		}
+	} else {
+		/* for system ROM BIOS - try 0xF000 first */
+		rom_start = 0xF000;
+		if ((eeprom_index = rom_identify(rom_start)) == -1) {
+			/* try 0xE000 */
+			rom_start = 0xE000;
+			if ((eeprom_index = rom_identify(rom_start)) == -1) {
+				error("Cannot detect flash ROM type.\nOn Sergey's XT Version 1.0 systems make sure that SW2.6 - SW2.7 are OFF.");
+			}
 		}
 	}
 
@@ -587,8 +595,8 @@ int main(int argc, char *argv[])
 		if (!strcmp(argv[i], "-a")) {
 			if (++i < argc) {
 				sscanf(argv[i], "%x", &rom_seg);
-				if (rom_seg < 0xE000)
-					error("Invalid ROM segment specified (must be in E000-FFFF range).");
+				if (rom_seg < 0xC000)
+					error("Invalid ROM segment specified (must be in C000-FFFF range).");
 			} else {
 				error("Option -a requires an argument.");
 			}
