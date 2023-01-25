@@ -1,7 +1,7 @@
 # Makefile for xiflash
 #
-# Copyright (C) 2012 Sergey Kiselev.
-# Provided for hobbyist use on the Xi 8088 board.
+# Copyright (C) 2012 - 2023 Sergey Kiselev.
+# BIOS flash ROM utility for Xi 8088 and Micro 8088 computers
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by

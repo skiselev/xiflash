@@ -2,7 +2,7 @@
  * xiflash.c - BIOS flash ROM utility for Xi 8088 and Micro 8088 computers
  *
  *
- * Copyright (C) 2012, 2021 Sergey Kiselev.
+ * Copyright (C) 2012 - 2023 Sergey Kiselev.
  * 64 KiB image support ideas borrowed from uflash by Aitor Gomez (spark2k06)
  *
  * This program is free software: you can redistribute it and/or modify
