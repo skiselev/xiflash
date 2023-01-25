@@ -31,7 +31,7 @@
 #include <malloc.h>
 #include <dos.h>
 
-#define VERSION			"0.4"
+#define VERSION			"0.5"
 #define DEFAULT_ROM_SIZE	32768
 
 #define MODE_READ		1

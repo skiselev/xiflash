@@ -19,7 +19,7 @@ By default xiflash works on 0xF8000-0xFFFFF range, which is normally used by sys
 1. Re-program the system BIOS with the image from bios.bin file:
 > xiflash -i bios.bin -p
 
-Note: It is assumed that bios.bin is a valid system BIOS ROM image, and its size is either 32 KiB or 64 KiB. xiflash will program 32 KiB images starting from address 0xF8000, and 64 KiB images starting from address 0xF0000
+Note: It is assumed that bios.bin is a valid system BIOS ROM image, and its size is 24 KiB, 32 KiB or 64 KiB. xiflash will program 24 KiB images starting from address 0xFA000, 32 KiB images starting from address 0xF8000, and 64 KiB images starting from address 0xF0000
 
 2. Read the current system BIOS code from the code and save it to the backup.bin file:
 > xiflash -o backup.bin -r
@@ -33,6 +33,9 @@ starting from address 0xF0000:
 Note: It is assumed that xt-ide.bin is smaller that 32 KiB and won't overwrite system's BIOS. Is is also assumed that 0xF0000 area is available.
 
 ## Release Notes
+
+### Version 0.5 - January 25, 2023
+* Use 0xFA00 as the default address for 24 KiB images. That's the image size for Micro 8088 BIOS
 
 ### Version 0.4 - November 29, 2021
 * Fixed programming ROM images larger than 64 KiB
