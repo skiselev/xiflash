@@ -103,8 +103,9 @@ void usage()
 	printf("   -i   - Specifies input file for -p, -v, and, -c options.\n");
 	printf("   -o   - Specifies output file for -r option.\n");
 	printf("   -a   - Segment address of flash ROM area to work on in hexadecimal format.\n");
-	printf("          Must be in C000-FFFF range. The default is F800 (BIOS address) for\n");
-	printf("          32 KiB images, F000 for 64 KiB images, and E000 for 128 KiB images.\n");
+	printf("          Must be in C000-FFFF range. The default is FA00 (Micro 8088 BIOS\n");
+	printf("          address) for 24 KiB images, F800 (BIOS address) for 32 KiB images,\n");
+	printf("          F000 for 64 KiB images, and E000 for 128 KiB images.\n");
 	printf("   -s   - Specifies ROM size for -r and -c options.\n");
 	printf("	  The default is %u.\n\n", DEFAULT_ROM_SIZE);
 	exit(1);
@@ -651,6 +652,8 @@ int main(int argc, char *argv[])
 				rom_seg = 0xF000;	/* set default ROM segment to F0000 for 64 KiB images */
 			} else if (rom_size == 131072) {
 				rom_seg = 0xE000;
+			} else if (rom_size == 24576) {
+				rom_seg = 0xFA00;	/* special case for Micro 8088, 24 KiB ROM images */
 			}
 		}
 		/* check if ROM size extends beyond 1 MiB */
