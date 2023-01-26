@@ -62,6 +62,4 @@ This is the initial release. It supports the following flash ROM devices:
 
 * Winbond W29EE011A-15 - On Xi 8088, flash ROM fails to exit vendor/device identification mode when system is in turbo mode. System will be stuck and will need to be powered down/up to reset the flash ROM, regular hard reset won't help. Apparently the chip is not fast enough. Make sure to turn off the turbo mode when programming this IC.
 
-* The utility doesn't specifically support images larger than 64 KiB, and most likely will fail or behave unpredictably.
-
 * On the Sergey's XT board it might be necessary to turn OFF jumpers SW2.5-SW2.7. This will map the entire flash ROM to the 0xE0000-0xFFFFF area. This is not necessary on the Xi 8088 and Micro 8088 systems, as the flash ROM starts at 0xF0000, which is always mapped to the system's memory.
